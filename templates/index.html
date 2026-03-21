@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threads AutoPost Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel (最新版 v7) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        /* モバイルナビゲーションのスクロールバーを非表示にする設定 */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // SVG Icons (Lucide-like)
+        const Settings = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>;
+        const Edit3 = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>;
+        const Calendar = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
+        const CheckCircle = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
+        const XCircle = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>;
+        const Clock = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>;
+        const Play = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>;
+        const ImageIcon = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
+        const User = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;
+        const Save = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>;
+        const Upload = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
+        const Sparkles = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 3l1.912 5.813a2 2 0 001.275 1.275L21 12l-5.813 1.912a2 2 0 00-1.275 1.275L12 21l-1.912-5.813a2 2 0 00-1.275-1.275L3 12l5.813-1.912a2 2 0 001.275-1.275L12 3z"></path></svg>;
+        const MessageCircle = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>;
+        const Send = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>;
+        const BarChart2 = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>;
+        const Heart = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>;
+        const Eye = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>;
+        const RefreshCw = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
+
+        function App() {
+            // -- State --
+            const [activeTab, setActiveTab] = useState('create');
+            const [credentials, setCredentials] = useState({ token: '', userId: '', baseUrl: '', pictSpaceUrl: '', pixivUrl: '' });
+            const [posts, setPosts] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [isFetchingUser, setIsFetchingUser] = useState(false);
+            const [isUploading, setIsUploading] = useState(false);
+            const [isUpdatingInsights, setIsUpdatingInsights] = useState(false);
+            const [newPost, setNewPost] = useState({ text: '', scheduledAt: '' });
+            const [selectedImages, setSelectedImages] = useState([]); // 画像URLリスト
+
+            const [generatePrompt, setGeneratePrompt] = useState('');
+            const [isGenerating, setIsGenerating] = useState(false);
+
+            const [chatMessages, setChatMessages] = useState([
+                { 
+                    role: 'system', 
+                    content: 'あなたはThreads運用とPictSpace・Pixivでのイラスト活動・販売促進に特化したAIアドバイザーです。ユーザーの目的はAIイラストをPictSpaceやPixivで公開・販売し、Threadsから集客することです。Threadsの運用、PictSpace/Pixivでの宣伝、SNS集客以外の一般的な話題（ニュース、プログラミング、関係のない雑談など）を振られた場合は、「申し訳ありませんが、Threadsの運用やイラスト販売・公開（PictSpace/Pixiv）に関するご質問にのみお答えしています。」と必ず丁重に拒否してください。' 
+                },
+                { 
+                    role: 'assistant', 
+                    content: 'ThreadsでのPictSpace・Pixivへの誘導や運用方法について何でも聞いてください！\n※Threads運用・イラスト活動以外の質問にはお答えできませんのでご了承ください。' 
+                }
+            ]);
+            const [chatInput, setChatInput] = useState('');
+            const [isChatting, setIsChatting] = useState(false);
+
+            // -- Functions --
+            const apiCall = (path) => path.startsWith('./') ? path : `./${path.startsWith('/') ? path.slice(1) : path}`;
+
+            const addLog = (message, type = 'info') => {
+                const time = new Date().toLocaleTimeString();
+                setLogs(prev => [{ time, message, type }, ...prev].slice(0, 50));
+            };
+
+            const loadData = async () => {
+                try {
+                    const [settingsRes, postsRes] = await Promise.all([
+                        fetch(apiCall('api/settings')).then(r => r.json()),
+                        fetch(apiCall('api/posts')).then(r => r.json())
+                    ]);
+                    setCredentials(prev => prev.token === '' ? settingsRes : prev);
+                    setPosts(postsRes);
+                } catch (e) {
+                    console.error("Data load error", e);
+                    addLog(`データ取得エラー: ${e.message}`, 'error');
+                }
+            };
+
+            useEffect(() => {
+                loadData();
+                const interval = setInterval(loadData, 5000);
+                return () => clearInterval(interval);
+            }, []);
+
+            const saveSettings = async () => {
+                try {
+                    await fetch(apiCall('api/settings'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(credentials)
+                    });
+                    addLog('設定を保存しました', 'success');
+                } catch (e) {
+                    addLog(`保存失敗: ${e.message}`, 'error');
+                }
+            };
+
+            const fetchUserId = async () => {
+                if (!credentials.token) {
+                    addLog('アクセストークンが入力されていません', 'error');
+                    return;
+                }
+                setIsFetchingUser(true);
+                addLog('ユーザーIDの取得を開始します...');
+                try {
+                    const res = await fetch(apiCall('api/fetch_user'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: credentials.token })
+                    });
+                    const data = await res.json();
+                    if (data && data.id) {
+                        setCredentials(prev => ({ ...prev, userId: data.id }));
+                        addLog(`ユーザーID取得成功: ${data.username || ''} (${data.id})`, 'success');
+                        await fetch(apiCall('api/settings'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ...credentials, userId: data.id })
+                        });
+                    } else {
+                        addLog(`取得失敗: ${data?.error?.message || '不明なエラー'}`, 'error');
+                    }
+                } catch (err) {
+                    addLog(`通信エラー: ${err.message}`, 'error');
+                }
+                setIsFetchingUser(false);
+            };
+
+            const handleFileUpload = async (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length === 0) return;
+                setIsUploading(true);
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        const res = await fetch(apiCall('api/upload'), { method: 'POST', body: formData });
+                        const data = await res.json();
+                        if (data && data.url) {
+                            setSelectedImages(prev => [...prev, data.url]);
+                            addLog(`アップロード完了: ${file.name}`, 'success');
+                        } else {
+                            addLog(`アップロード失敗: ${data?.error || '不明なエラー'}`, 'error');
+                        }
+                    } catch (err) {
+                        addLog(`アップロード失敗: ${file.name} - ${err.message}`, 'error');
+                    }
+                }
+                setIsUploading(false);
+                e.target.value = null;
+            };
+
+            const handleSavePost = async (isImmediate = false) => {
+                if (!newPost.text) {
+                    addLog('テキストは必須です', 'error');
+                    return;
+                }
+                if (!isImmediate && !newPost.scheduledAt) {
+                    addLog('スケジュール投稿の場合は予定日時が必須です', 'error');
+                    return;
+                }
+
+                const postPayload = { 
+                    text: newPost.text,
+                    imageUrl: selectedImages.join(','),
+                    scheduledAt: newPost.scheduledAt || new Date().toISOString().slice(0, 16),
+                    postNow: isImmediate 
+                };
+
+                try {
+                    await fetch(apiCall('api/posts'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(postPayload)
+                    });
+                    addLog(isImmediate ? '投稿を実行しました' : 'スケジュールに登録しました', 'success');
+                    setNewPost({ text: '', scheduledAt: '' });
+                    setSelectedImages([]);
+                    setActiveTab('schedule');
+                    loadData();
+                } catch (err) {
+                    addLog(`保存エラー: ${err.message}`, 'error');
+                }
+            };
+
+            const forceExecute = async (postId) => {
+                try {
+                    addLog(`投稿(ID:${postId})を手動実行します...`);
+                    await fetch(apiCall(`api/posts/${postId}/execute`), { method: 'POST' });
+                    loadData();
+                } catch (err) {
+                    addLog(`実行エラー: ${err.message}`, 'error');
+                }
+            };
+
+            const handleUpdateInsights = async () => {
+                setIsUpdatingInsights(true);
+                addLog('インサイトを手動更新しています...');
+                try {
+                    const res = await fetch(apiCall('api/insights/update'), { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        await loadData();
+                        addLog('インサイトの更新が完了しました', 'success');
+                    } else {
+                        addLog('インサイトの更新に失敗しました', 'error');
+                    }
+                } catch (err) {
+                    addLog(`インサイト更新エラー: ${err.message}`, 'error');
+                }
+                setIsUpdatingInsights(false);
+            };
+
+            const handleGenerateText = async () => {
+                if (!generatePrompt.trim()) {
+                    addLog('指示を入力してください', 'error');
+                    return;
+                }
+                setIsGenerating(true);
+                addLog('AIが宣伝文を生成中...');
+                const fullPrompt = `あなたはプロのSNSマーケターです。以下のテーマでThreads用の宣伝テキストを作成してください。
+【テーマ】: ${generatePrompt}
+【目的】: 下記URLへ誘導。指示に合わせて使い分けてください。
+- PictSpace: ${credentials.pictSpaceUrl || '未設定'}
+- Pixiv: ${credentials.pixivUrl || '未設定'}
+【条件】: 目を引く文体、絵文字活用、明確なCTA、ハッシュタグ3〜5個。`;
+
+                try {
+                    const res = await fetch(apiCall('api/ai/generate'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: fullPrompt })
+                    });
+                    const data = await res.json();
+                    if (data && data.text) {
+                        setNewPost(prev => ({ ...prev, text: data.text }));
+                        addLog('AI生成完了！', 'success');
+                        setGeneratePrompt('');
+                    } else {
+                        addLog(`AIエラー: ${data?.error || '不明なエラー'}`, 'error');
+                    }
+                } catch (err) {
+                    addLog(`通信エラー: ${err.message}`, 'error');
+                }
+                setIsGenerating(false);
+            };
+
+            const handleSendChatMessage = async (e) => {
+                e.preventDefault();
+                if (!chatInput.trim()) return;
+                const userMsg = { role: 'user', content: chatInput };
+                const newMessages = [...chatMessages, userMsg];
+                setChatMessages(newMessages);
+                setChatInput('');
+                setIsChatting(true);
+                try {
+                    const res = await fetch(apiCall('api/ai/chat'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ messages: newMessages })
+                    });
+                    const data = await res.json();
+                    if (data && data.reply) {
+                        setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+                    } else {
+                        setChatMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${data?.error || '応答がありませんでした'}` }]);
+                    }
+                } catch (err) {
+                    setChatMessages(prev => [...prev, { role: 'assistant', content: `通信エラー: ${err.message}` }]);
+                }
+                setIsChatting(false);
+            };
+
+            // -- UI Components --
+            const renderTabContent = () => {
+                switch (activeTab) {
+                    case 'settings':
+                        return (
+                            <div className="space-y-6 animate-fadeIn">
+                                <h2 className="text-xl font-bold flex items-center"><Settings className="mr-2" /> API設定</h2>
+                                <div className="space-y-4">
+                                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-4">
+                                        <h3 className="font-bold text-blue-800 text-sm">Threads API</h3>
+                                        <input type="password" value={credentials.token} onChange={e => setCredentials({...credentials, token: e.target.value})} placeholder="アクセストークン" className="w-full p-2 border rounded" />
+                                        <div className="flex flex-col sm:flex-row gap-2">
+                                            <input type="text" value={credentials.userId} onChange={e => setCredentials({...credentials, userId: e.target.value})} placeholder="ユーザーID" className="flex-1 p-2 border rounded" />
+                                            <button onClick={fetchUserId} disabled={isFetchingUser} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center justify-center">
+                                                <User className="mr-2 w-4 h-4" /> {isFetchingUser ? '取得中...' : 'ID取得'}
+                                            </button>
+                                        </div>
+                                        <input type="url" value={credentials.baseUrl} onChange={e => setCredentials({...credentials, baseUrl: e.target.value})} placeholder="公開ベースURL (ngrok等)" className="w-full p-2 border rounded" />
+                                    </div>
+                                    <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 space-y-3">
+                                        <h3 className="font-bold text-indigo-800 text-sm">誘導先 URL</h3>
+                                        <input type="url" value={credentials.pictSpaceUrl} onChange={e => setCredentials({...credentials, pictSpaceUrl: e.target.value})} placeholder="PictSpace ショップURL" className="w-full p-2 border rounded" />
+                                        <input type="url" value={credentials.pixivUrl} onChange={e => setCredentials({...credentials, pixivUrl: e.target.value})} placeholder="Pixiv プロフィールURL" className="w-full p-2 border rounded" />
+                                    </div>
+                                    <button onClick={saveSettings} className="w-full py-3 bg-gray-800 text-white rounded font-bold flex items-center justify-center"><Save className="mr-2 w-5 h-5" /> 設定を保存</button>
+                                </div>
+                            </div>
+                        );
+                    case 'create':
+                        return (
+                            <div className="space-y-4 md:space-y-6 animate-fadeIn">
+                                <h2 className="text-xl font-bold flex items-center"><Edit3 className="mr-2" /> 新規投稿作成</h2>
+                                <div className="bg-indigo-50 border border-indigo-100 p-3 rounded-lg">
+                                    <label className="block text-sm font-bold text-indigo-800 mb-2 flex items-center"><Sparkles className="w-4 h-4 mr-1" /> AI宣伝文生成</label>
+                                    <div className="flex flex-col sm:flex-row gap-2">
+                                        <input type="text" value={generatePrompt} onChange={e => setGeneratePrompt(e.target.value)} placeholder="例: 夏の新作AIイラスト。Pixivに高画質版投稿。" className="flex-1 p-2 border rounded text-sm" />
+                                        <button onClick={handleGenerateText} disabled={isGenerating || !generatePrompt.trim()} className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-bold">
+                                            {isGenerating ? '中...' : '生成'}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <textarea value={newPost.text} onChange={e => setNewPost({...newPost, text: e.target.value})} rows="5" placeholder="投稿内容..." className="w-full p-3 border rounded focus:ring-2 focus:ring-blue-500" required />
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2">画像 (最大10枚)</label>
+                                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                                            {selectedImages.map((url, i) => (
+                                                <div key={i} className="relative aspect-square bg-gray-200 rounded overflow-hidden">
+                                                    <img src={url} className="w-full h-full object-cover" />
+                                                    <button onClick={() => setSelectedImages(selectedImages.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-bl"><XCircle className="w-4 h-4"/></button>
+                                                </div>
+                                            ))}
+                                            {selectedImages.length < 10 && (
+                                                <label className="aspect-square border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50">
+                                                    <Upload className="text-gray-400" />
+                                                    <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
+                                                </label>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <input type="datetime-local" value={newPost.scheduledAt} onChange={e => setNewPost({...newPost, scheduledAt: e.target.value})} className="w-full p-2 border rounded" />
+                                    <div className="flex flex-col sm:flex-row gap-3">
+                                        <button onClick={() => handleSavePost(false)} className="flex-1 py-3 bg-blue-600 text-white rounded font-bold">スケジュール登録</button>
+                                        <button onClick={() => handleSavePost(true)} className="flex-1 py-3 bg-gray-800 text-white rounded font-bold">今すぐ投稿</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    case 'schedule':
+                        return (
+                            <div className="space-y-4 animate-fadeIn">
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center"><Calendar className="mr-2" /> 投稿管理</h2>
+                                    <button 
+                                        onClick={handleUpdateInsights} 
+                                        disabled={isUpdatingInsights}
+                                        className="text-[10px] md:text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 transition flex items-center shadow-sm disabled:bg-gray-400"
+                                    >
+                                        <RefreshCw className={`w-3 h-3 mr-1.5 ${isUpdatingInsights ? 'animate-spin' : ''}`} /> 
+                                        {isUpdatingInsights ? '更新中...' : 'インサイト手動更新'}
+                                    </button>
+                                </div>
+                                <div className="overflow-x-auto border rounded-lg shadow-sm bg-white">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-gray-50 border-b text-gray-500 text-xs">
+                                            <tr>
+                                                <th className="p-3">日時</th>
+                                                <th className="p-3">内容</th>
+                                                <th className="p-3 text-center">状態</th>
+                                                <th className="p-3 text-center">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y text-gray-700">
+                                            {posts.map(p => (
+                                                <tr key={p.id} className="hover:bg-gray-50 transition">
+                                                    <td className="p-3 whitespace-nowrap">{p.scheduledAt?.replace('T', ' ')}</td>
+                                                    <td className="p-3 truncate max-w-[150px]">{p.text}</td>
+                                                    <td className="p-3 text-center">
+                                                        {p.status === 'Pending' && <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-[10px] font-bold">待機</span>}
+                                                        {p.status === 'Published' && <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-[10px] font-bold">完了</span>}
+                                                        {p.status === 'Failed' && <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-[10px] font-bold">失敗</span>}
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        {p.status !== 'Published' && <button onClick={() => forceExecute(p.id)} className="bg-gray-800 text-white text-[10px] font-bold px-2 py-1 rounded hover:bg-gray-700">即投稿</button>}
+                                                        {p.status === 'Published' && <span className="text-[10px] text-gray-400">-</span>}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {posts.length === 0 && (
+                                                <tr><td colSpan="4" className="p-8 text-center text-gray-400">データがありません。</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        );
+                    case 'dashboard':
+                        const stats = posts.filter(p => p.status === 'Published').reduce((acc, curr) => {
+                            acc.views += curr.views || 0;
+                            acc.likes += curr.likes || 0;
+                            acc.replies += curr.replies || 0;
+                            return acc;
+                        }, { views: 0, likes: 0, replies: 0 });
+
+                        return (
+                            <div className="space-y-6 animate-fadeIn">
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center"><BarChart2 className="mr-2" /> 投稿インサイト</h2>
+                                    <button 
+                                        onClick={handleUpdateInsights} 
+                                        disabled={isUpdatingInsights}
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center"
+                                    >
+                                        <RefreshCw className={`w-3 h-3 mr-1 ${isUpdatingInsights ? 'animate-spin' : ''}`} /> 
+                                        同期
+                                    </button>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div className="bg-white border rounded-xl p-4 shadow-sm">
+                                        <div className="flex items-center text-gray-500 text-sm mb-1">
+                                            <Eye className="w-4 h-4 mr-1 text-blue-500" /> インプレッション
+                                        </div>
+                                        <div className="text-2xl font-black">{stats.views.toLocaleString()}</div>
+                                    </div>
+                                    <div className="bg-white border rounded-xl p-4 shadow-sm">
+                                        <div className="flex items-center text-gray-500 text-sm mb-1">
+                                            <Heart className="w-4 h-4 mr-1 text-red-500" /> 合計いいね
+                                        </div>
+                                        <div className="text-2xl font-black">{stats.likes.toLocaleString()}</div>
+                                    </div>
+                                    <div className="bg-white border rounded-xl p-4 shadow-sm">
+                                        <div className="flex items-center text-gray-500 text-sm mb-1">
+                                            <MessageCircle className="w-4 h-4 mr-1 text-green-500" /> 合計返信
+                                        </div>
+                                        <div className="text-2xl font-black">{stats.replies.toLocaleString()}</div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
+                                    <div className="p-4 border-b font-bold bg-gray-50 text-sm">個別パフォーマンス</div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-gray-50 text-gray-500 text-xs border-b">
+                                                <tr>
+                                                    <th className="p-4">内容</th>
+                                                    <th className="p-4 text-center">閲覧</th>
+                                                    <th className="p-4 text-center">いいね</th>
+                                                    <th className="p-4 text-center">返信</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y">
+                                                {posts.filter(p => p.status === 'Published').map(p => (
+                                                    <tr key={p.id} className="hover:bg-gray-50 transition">
+                                                        <td className="p-4">
+                                                            <div className="text-[10px] text-gray-400 mb-1">{p.scheduledAt?.split('T')[0]}</div>
+                                                            <div className="line-clamp-2 text-gray-700 leading-snug">{p.text}</div>
+                                                        </td>
+                                                        <td className="p-4 text-center font-bold text-blue-600">{(p.views || 0).toLocaleString()}</td>
+                                                        <td className="p-4 text-center font-bold text-red-600">{(p.likes || 0).toLocaleString()}</td>
+                                                        <td className="p-4 text-center font-bold text-green-600">{(p.replies || 0).toLocaleString()}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    case 'ai_assistant':
+                        return (
+                            <div className="space-y-4 animate-fadeIn flex flex-col h-full min-h-[450px]">
+                                <h2 className="text-xl font-bold flex items-center"><MessageCircle className="mr-2 text-indigo-600" /> AIアシスタント</h2>
+                                <div className="flex-1 bg-gray-50 border rounded-lg p-3 overflow-y-auto flex flex-col gap-3 max-h-[350px]">
+                                    {chatMessages.filter(m => m.role !== 'system').map((msg, i) => (
+                                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div className={`max-w-[85%] p-3 rounded-lg text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white border text-gray-800 rounded-bl-none shadow-sm'}`}>
+                                                {msg.content.split('\n').map((l, j) => <p key={j}>{l}</p>)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {isChatting && <div className="text-xs text-gray-400 animate-pulse">AI思考中...</div>}
+                                </div>
+                                <form onSubmit={handleSendChatMessage} className="flex gap-2">
+                                    <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="質問を入力..." className="flex-1 p-2 border rounded" disabled={isChatting} />
+                                    <button type="submit" disabled={isChatting} className="bg-indigo-600 text-white p-2 rounded"><Send className="w-5 h-5" /></button>
+                                </form>
+                            </div>
+                        );
+                    default: return null;
+                }
+            };
+
+            return (
+                <div className="flex flex-col md:flex-row h-screen bg-gray-100 overflow-hidden text-sm md:text-base">
+                    <div className="w-full md:w-64 bg-white border-b md:border-r flex flex-col shrink-0 z-20">
+                        <div className="p-4 border-b">
+                            <h1 className="text-lg font-black text-gray-800">Threads <span className="text-blue-600">AutoPost</span></h1>
+                        </div>
+                        <nav className="flex md:flex-col overflow-x-auto p-2 gap-2 scrollbar-hide">
+                            {[
+                                {id: 'create', icon: Edit3, label: '作成'},
+                                {id: 'schedule', icon: Calendar, label: '管理'},
+                                {id: 'dashboard', icon: BarChart2, label: '分析'},
+                                {id: 'ai_assistant', icon: MessageCircle, label: 'AIアシスタント'},
+                                {id: 'settings', icon: Settings, label: '設定'}
+                            ].map(t => (
+                                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex items-center px-4 py-2 md:py-3 rounded-lg flex-shrink-0 transition-all ${activeTab === t.id ? 'bg-blue-50 text-blue-700 font-bold shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>
+                                    <t.icon className="w-5 h-5 mr-2 md:mr-3" /> <span className="text-xs md:text-sm">{t.label}</span>
+                                </button>
+                            ))}
+                        </nav>
+                    </div>
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                        <main className="flex-1 overflow-y-auto p-4 md:p-8">
+                            <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-sm border p-4 md:p-8 min-h-[500px]">
+                                {renderTabContent()}
+                            </div>
+                        </main>
+                        <div className="h-32 md:h-40 bg-gray-900 text-gray-100 p-3 font-mono text-[10px] md:text-xs overflow-y-auto border-t-4 border-gray-800 shrink-0">
+                            <div className="flex justify-between text-gray-400 mb-1 font-bold">
+                                <span>SYSTEM CONSOLE</span>
+                                <button onClick={() => setLogs([])} className="hover:text-white">CLEAR</button>
+                            </div>
+                            {logs.map((log, i) => (
+                                <div key={i} className="flex gap-2">
+                                    <span className="text-gray-500 shrink-0">[{log.time}]</span>
+                                    <span className={log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-green-400' : 'text-blue-300'}>{log.message}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

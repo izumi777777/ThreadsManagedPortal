@@ -1,0 +1,16 @@
+# セキュリティ関連（絶対にプッシュしない）
+.env
+アクセスキー.txt
+
+# テストコード（不要なら除外）
+test*.py
+
+# データベースファイルとアップロード画像
+instance/
+threads_dashboard.db
+static/uploads/*
+!static/uploads/.gitkeep
+
+# Pythonのキャッシュ
+__pycache__/
+*.pyc
