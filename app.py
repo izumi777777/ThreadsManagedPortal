@@ -4,296 +4,263 @@ import datetime
 import requests
 import traceback
 from flask import Flask, request, jsonify, render_template
-from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
 from werkzeug.utils import secure_filename
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 
-# .envファイルの読み込み (APIキーなどの環境変数)
+# firebase_config から Firestore インスタンスをインポート
+from firebase_config import fs_db
+
+# .envファイルの読み込み
 load_dotenv()
 
-# --- Flask & Database 設定 ---
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///threads_dashboard.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
-
-# 画像のアップロード先フォルダを自動作成
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-db = SQLAlchemy(app)
+# ------------------------------------------------------------------ #
+# データベースヘルパー（Firestore用）
+# ------------------------------------------------------------------ #
 
-# --- データベースモデル ---
-class AppSettings(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    token = db.Column(db.String(500), default="")
-    user_id = db.Column(db.String(100), default="")
-    base_url = db.Column(db.String(500), default="")
-    pict_space_url = db.Column(db.String(500), default="") # AI用: PictSpaceのURL
-    pixiv_url = db.Column(db.String(500), default="")      # AI用: PixivのURL
+def get_settings():
+    """設定情報を取得（ドキュメントID 'default' 固定）"""
+    doc = fs_db.collection('threads_settings').document('default').get()
+    return doc.to_dict() if doc.exists else {}
 
-class Post(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    thread_id = db.Column(db.String(100), default="") # Threads側での投稿ID
-    text = db.Column(db.Text, nullable=False)
-    image_url = db.Column(db.String(500), default="") # カンマ区切りのURL
-    scheduled_at = db.Column(db.DateTime, nullable=False)
-    status = db.Column(db.String(20), default='Pending')
-    error = db.Column(db.Text, default="")
-    created_at = db.Column(db.DateTime, default=datetime.datetime.now)
-    
-    # 統計情報（インサイト）
-    views = db.Column(db.Integer, default=0)   # インプレッション
-    likes = db.Column(db.Integer, default=0)   # いいね
-    replies = db.Column(db.Integer, default=0) # 返信
-    reposts = db.Column(db.Integer, default=0) # 再投稿
-    quotes = db.Column(db.Integer, default=0)  # 引用
+def get_post_ref(post_id):
+    """特定の投稿ドキュメントへの参照を取得"""
+    return fs_db.collection('threads_posts').document(str(post_id))
 
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "text": self.text,
-            "imageUrl": self.image_url,
-            "scheduledAt": self.scheduled_at.strftime('%Y-%m-%dT%H:%M'),
-            "status": self.status,
-            "error": self.error,
-            "views": self.views,
-            "likes": self.likes,
-            "replies": self.replies,
-            "reposts": self.reposts,
-            "quotes": self.quotes
-        }
+def post_to_dict(doc):
+    """Firestoreドキュメントをテンプレート/API用辞書に変換"""
+    data = doc.to_dict()
+    data['id'] = doc.id
+    # フロントエンドが期待するキー名に合わせる
+    data['imageUrl'] = data.get('image_url', '')
+    data['scheduledAt'] = data.get('scheduled_at', '')
+    return data
 
-# --- Threads API 統計情報の更新処理 ---
+# ------------------------------------------------------------------ #
+# Threads API 統計情報の更新処理
+# ------------------------------------------------------------------ #
+
 def update_post_insights(post_id):
-    """特定の投稿のインサイトをThreads APIから取得して更新する"""
-    with app.app_context():
-        post = Post.query.get(post_id)
-        settings = AppSettings.query.first()
-        if not post or not post.thread_id or not settings or not settings.token:
-            return
+    """特定の投稿のインサイトを更新"""
+    post_ref = get_post_ref(post_id)
+    post_doc = post_ref.get()
+    settings = get_settings()
 
-        try:
-            # メトリクスを指定して取得
-            metrics = "views,likes,replies,reposts,quotes"
-            url = f"https://graph.threads.net/v1.0/{post.thread_id}/insights?metric={metrics}&access_token={settings.token}"
-            
-            res = requests.get(url)
-            data = res.json()
-            
-            if "data" in data:
-                for item in data["data"]:
-                    name = item.get("name")
-                    value = item.get("values", [{}])[0].get("value", 0)
-                    if name == "views": post.views = value
-                    elif name == "likes": post.likes = value
-                    elif name == "replies": post.replies = value
-                    elif name == "reposts": post.reposts = value
-                    elif name == "quotes": post.quotes = value
-                
-                db.session.commit()
-        except Exception as e:
-            print(f"Insight update error (Post {post_id}): {e}")
+    if not post_doc.exists or not settings.get('token'):
+        return
+
+    post = post_doc.to_dict()
+    if not post.get('thread_id'):
+        return
+
+    try:
+        metrics = "views,likes,replies,reposts,quotes"
+        url = f"https://graph.threads.net/v1.0/{post['thread_id']}/insights?metric={metrics}&access_token={settings['token']}"
+        
+        res = requests.get(url)
+        data = res.json()
+        
+        if "data" in data:
+            updates = {}
+            for item in data["data"]:
+                name = item.get("name")
+                value = item.get("values", [{}])[0].get("value", 0)
+                updates[name] = value
+            post_ref.update(updates)
+    except Exception as e:
+        print(f"Insight update error (Post {post_id}): {e}")
 
 def update_all_insights():
-    """公開済みの全投稿のインサイトを一括更新する"""
-    with app.app_context():
-        # 最近30日以内に公開された投稿を対象にする
-        recent_date = datetime.datetime.now() - datetime.timedelta(days=30)
-        published_posts = Post.query.filter(
-            Post.status == 'Published', 
-            Post.thread_id != "",
-            Post.created_at >= recent_date
-        ).all()
-        
-        for p in published_posts:
-            update_post_insights(p.id)
-            time.sleep(1) # APIレート制限対策
+    """公開済みの全投稿のインサイトを一括更新"""
+    # 最近30日以内に公開された投稿を対象
+    recent_date = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+    docs = fs_db.collection('threads_posts') \
+                 .where('status', '==', 'Published') \
+                 .where('created_at', '>=', recent_date) \
+                 .stream()
+    
+    for doc in docs:
+        update_post_insights(doc.id)
+        time.sleep(1) # レート制限対策
 
-# --- Threads API 投稿実行処理 ---
+# ------------------------------------------------------------------ #
+# Threads API 投稿実行処理
+# ------------------------------------------------------------------ #
+
 def execute_threads_post(post_id):
-    with app.app_context():
-        post = Post.query.get(post_id)
-        settings = AppSettings.query.first()
+    """Threadsへの投稿を実行"""
+    post_ref = get_post_ref(post_id)
+    post_doc = post_ref.get()
+    settings = get_settings()
+    
+    if not post_doc.exists: return
+    post = post_doc.to_dict()
+
+    if post.get('status') == 'Published': return
+    
+    if not settings.get('token') or not settings.get('user_id'):
+        post_ref.update({'status': 'Failed', 'error': 'API設定が未完了です'})
+        return
+
+    try:
+        post_ref.update({'status': 'Publishing'})
         
-        if not post or post.status == 'Published':
-            return
-        if not settings or not settings.token or not settings.user_id:
-            post.status = 'Failed'
-            post.error = 'API設定が未完了です'
-            db.session.commit()
-            return
+        base_url = "https://graph.threads.net/v1.0"
+        access_token = settings['token']
+        
+        raw_urls = post.get('image_url', '').split(',') if post.get('image_url') else []
+        final_image_urls = []
+        for url in raw_urls:
+            u = url.strip()
+            if u.startswith('/') and settings.get('base_url'):
+                u = f"{settings['base_url'].rstrip('/')}{u}"
+            if u: final_image_urls.append(u)
 
-        try:
-            post.status = 'Publishing'
-            db.session.commit()
-
-            base_url = "https://graph.threads.net/v1.0"
-            access_token = settings.token
-            
-            # 画像URLのリストを作成
-            raw_urls = post.image_url.split(',') if post.image_url else []
-            final_image_urls = []
-            for url in raw_urls:
-                u = url.strip()
-                if u.startswith('/'):
-                    if not settings.base_url:
-                        raise Exception("ローカル画像には公開ベースURLの設定が必要です")
-                    u = f"{settings.base_url.rstrip('/')}{u}"
-                if u:
-                    final_image_urls.append(u)
-
-            creation_id = None
-
-            # --- 投稿ロジック ---
-            if len(final_image_urls) > 1:
-                # カルーセル投稿
-                child_ids = []
-                for img in final_image_urls:
-                    res = requests.post(f"{base_url}/{settings.user_id}/threads", data={
-                        "access_token": access_token,
-                        "image_url": img,
-                        "media_type": "IMAGE",
-                        "is_carousel_item": "true"
-                    })
-                    res_data = res.json()
-                    if "id" not in res_data:
-                        raise Exception(f"子コンテナ作成失敗: {res_data}")
-                    child_ids.append(res_data["id"])
-                
-                res = requests.post(f"{base_url}/{settings.user_id}/threads", data={
-                    "access_token": access_token,
-                    "media_type": "CAROUSEL",
-                    "children": ",".join(child_ids),
-                    "text": post.text
+        creation_id = None
+        if len(final_image_urls) > 1:
+            # カルーセル投稿
+            child_ids = []
+            for img in final_image_urls:
+                res = requests.post(f"{base_url}/{settings['user_id']}/threads", data={
+                    "access_token": access_token, "image_url": img,
+                    "media_type": "IMAGE", "is_carousel_item": "true"
                 })
-                creation_id = res.json().get("id")
-            else:
-                # 1枚投稿 または テキストのみ
-                payload = {
-                    "access_token": access_token,
-                    "text": post.text,
-                    "media_type": "IMAGE" if final_image_urls else "TEXT"
-                }
-                if final_image_urls:
-                    payload["image_url"] = final_image_urls[0]
-
-                res = requests.post(f"{base_url}/{settings.user_id}/threads", data=payload)
-                creation_id = res.json().get("id")
-
-            if not creation_id:
-                raise Exception(f"コンテナ作成に失敗しました: {res.json()}")
-
-            # 公開処理待ち
-            time.sleep(5)
+                res_data = res.json()
+                if "id" not in res_data: raise Exception(f"子コンテナ作成失敗: {res_data}")
+                child_ids.append(res_data["id"])
             
-            publish_res = requests.post(f"{base_url}/{settings.user_id}/threads_publish", data={
-                "access_token": access_token,
-                "creation_id": creation_id
+            res = requests.post(f"{base_url}/{settings['user_id']}/threads", data={
+                "access_token": access_token, "media_type": "CAROUSEL",
+                "children": ",".join(child_ids), "text": post.get('text', '')
             })
-            pub_data = publish_res.json()
-            
-            if "id" not in pub_data:
-                raise Exception(f"公開失敗: {pub_data}")
+            creation_id = res.json().get("id")
+        else:
+            # 単一投稿
+            payload = {
+                "access_token": access_token, "text": post.get('text', ''),
+                "media_type": "IMAGE" if final_image_urls else "TEXT"
+            }
+            if final_image_urls: payload["image_url"] = final_image_urls[0]
+            res = requests.post(f"{base_url}/{settings['user_id']}/threads", data=payload)
+            creation_id = res.json().get("id")
 
-            # 成功時に投稿IDを保存
-            post.thread_id = pub_data["id"]
-            post.status = 'Published'
-            post.error = ""
-            
-        except Exception as e:
-            post.status = 'Failed'
-            post.error = str(e)
-            
-        db.session.commit()
+        if not creation_id: raise Exception(f"コンテナ作成失敗: {res.json()}")
 
-# --- スケジューラー ---
+        time.sleep(5)
+        publish_res = requests.post(f"{base_url}/{settings['user_id']}/threads_publish", data={
+            "access_token": access_token, "creation_id": creation_id
+        })
+        pub_data = publish_res.json()
+        
+        if "id" not in pub_data: raise Exception(f"公開失敗: {pub_data}")
+
+        post_ref.update({
+            'thread_id': pub_data["id"],
+            'status': 'Published',
+            'error': "",
+            'created_at': datetime.datetime.now().isoformat()
+        })
+    except Exception as e:
+        post_ref.update({'status': 'Failed', 'error': str(e)})
+
+# ------------------------------------------------------------------ #
+# スケジューラー
+# ------------------------------------------------------------------ #
+
 scheduler = BackgroundScheduler()
 scheduler.start()
 
 def check_scheduled_posts():
-    with app.app_context():
-        now = datetime.datetime.now()
-        pending_posts = Post.query.filter(Post.status == 'Pending', Post.scheduled_at <= now).all()
-        for p in pending_posts:
-            execute_threads_post(p.id)
+    """予約投稿のチェック（重要：複合インデックスが必要）"""
+    now_iso = datetime.datetime.now().isoformat()
+    # 状態が Pending かつ 予定時刻を過ぎたものをクエリ
+    docs = fs_db.collection('threads_posts') \
+                 .where('status', '==', 'Pending') \
+                 .where('scheduled_at', '<=', now_iso) \
+                 .stream()
+    for doc in docs:
+        execute_threads_post(doc.id)
 
-# 10秒おきにスケジュール投稿をチェック
+# 10秒おきにスケジュールチェック
 scheduler.add_job(func=check_scheduled_posts, trigger="interval", seconds=10)
-# 1時間おきにインサイト（統計情報）を自動更新
+# 1時間おきにインサイト更新
 scheduler.add_job(func=update_all_insights, trigger="interval", hours=1)
 
-# --- Azure OpenAI ---
+# ------------------------------------------------------------------ #
+# Azure OpenAI ヘルパー
+# ------------------------------------------------------------------ #
+
 def get_azure_client():
     api_key = os.environ.get('AZURE_OPENAI_API_KEY')
     endpoint = os.environ.get('AZURE_OPENAI_ENDPOINT')
     api_version = os.environ.get('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
 
-    if not api_key:
-        return None, "APIキーが設定されていません。"
-
+    if not api_key: return None, "APIキー未設定"
     try:
         client = AzureOpenAI(api_version=api_version, azure_endpoint=endpoint, api_key=api_key)
         return client, None
-    except Exception as e:
-        return None, str(e)
+    except Exception as e: return None, str(e)
 
-# --- API エンドポイント ---
+# ------------------------------------------------------------------ #
+# API エンドポイント
+# ------------------------------------------------------------------ #
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
-    settings = AppSettings.query.first()
-    if not settings:
-        settings = AppSettings()
-        db.session.add(settings)
-        db.session.commit()
-
     if request.method == 'POST':
         data = request.json
-        settings.token = data.get('token', '')
-        settings.user_id = data.get('userId', '')
-        settings.base_url = data.get('baseUrl', '')
-        settings.pict_space_url = data.get('pictSpaceUrl', '')
-        settings.pixiv_url = data.get('pixivUrl', '')
-        db.session.commit()
+        fs_db.collection('threads_settings').document('default').set({
+            'token': data.get('token', ''),
+            'user_id': data.get('userId', ''),
+            'base_url': data.get('baseUrl', ''),
+            'pict_space_url': data.get('pictSpaceUrl', ''),
+            'pixiv_url': data.get('pixivUrl', '')
+        })
         return jsonify({"success": True})
     
+    s = get_settings()
     return jsonify({
-        "token": settings.token, 
-        "userId": settings.user_id,
-        "baseUrl": settings.base_url,
-        "pictSpaceUrl": settings.pict_space_url,
-        "pixivUrl": settings.pixiv_url
+        "token": s.get('token', ''), "userId": s.get('user_id', ''),
+        "baseUrl": s.get('base_url', ''), "pictSpaceUrl": s.get('pict_space_url', ''),
+        "pixivUrl": s.get('pixiv_url', '')
     })
 
 @app.route('/api/posts', methods=['GET', 'POST'])
 def api_posts():
     if request.method == 'POST':
         data = request.json
-        dt = datetime.datetime.strptime(data['scheduledAt'], '%Y-%m-%dT%H:%M')
-        new_post = Post(
-            text=data['text'],
-            image_url=data.get('imageUrl', ''),
-            scheduled_at=dt
-        )
-        db.session.add(new_post)
-        db.session.commit()
+        # scheduledAt は ISOフォーマット文字列のまま保存
+        new_post = {
+            "text": data['text'],
+            "image_url": data.get('imageUrl', ''),
+            "scheduled_at": data['scheduledAt'],
+            "status": 'Pending',
+            "error": "",
+            "created_at": datetime.datetime.now().isoformat(),
+            "views": 0, "likes": 0, "replies": 0, "reposts": 0, "quotes": 0
+        }
+        _, doc_ref = fs_db.collection('threads_posts').add(new_post)
         if data.get('postNow'):
-            execute_threads_post(new_post.id)
-        return jsonify(new_post.to_dict())
+            execute_threads_post(doc_ref.id)
+        return jsonify({"id": doc_ref.id, **new_post})
     
-    posts = Post.query.order_by(Post.scheduled_at.desc()).all()
-    return jsonify([p.to_dict() for p in posts])
+    # 全投稿を日付順に取得
+    docs = fs_db.collection('threads_posts').order_by('scheduled_at', direction='DESCENDING').stream()
+    return jsonify([post_to_dict(doc) for doc in docs])
 
-@app.route('/api/posts/<int:post_id>/execute', methods=['POST'])
+@app.route('/api/posts/<post_id>/execute', methods=['POST'])
 def force_execute_post(post_id):
     execute_threads_post(post_id)
-    post = Post.query.get(post_id)
-    return jsonify(post.to_dict())
+    doc = get_post_ref(post_id).get()
+    return jsonify(post_to_dict(doc))
 
 @app.route('/api/insights/update', methods=['POST'])
 def api_update_insights():
-    """インサイトを手動で一括更新するエンドポイント"""
     try:
         update_all_insights()
         return jsonify({"success": True})
@@ -335,8 +302,7 @@ def upload_file():
     file = request.files.get('file')
     if not file: return jsonify({"error": "No file"}), 400
     filename = secure_filename(file.filename)
-    name, ext = os.path.splitext(filename)
-    new_filename = f"{name}_{int(time.time())}{ext}"
+    new_filename = f"{os.path.splitext(filename)[0]}_{int(time.time())}{os.path.splitext(filename)[1]}"
     file.save(os.path.join(app.config['UPLOAD_FOLDER'], new_filename))
     return jsonify({"url": f"/static/uploads/{new_filename}"})
 
@@ -352,8 +318,6 @@ def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    # PORT環境変数があればそれを使い、なければ5000を使う
+    # Firestore版では db.create_all() は不要
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

@@ -14,3 +14,5 @@ static/uploads/*
 # Pythonのキャッシュ
 __pycache__/
 *.pyc
+
+services.json
