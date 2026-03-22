@@ -3,6 +3,7 @@ import time
 import datetime
 import requests
 import traceback
+import boto3
 from flask import Flask, request, jsonify, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from werkzeug.utils import secure_filename
@@ -14,6 +15,12 @@ from firebase_config import fs_db
 
 # .envファイルの読み込み
 load_dotenv()
+
+BUCKET_NAME = os.environ.get('S3_BUCKET_NAME') 
+S3_REGION = os.environ.get('AWS_REGION', 'ap-northeast-1')
+
+# S3クライアントの初期化（App Runner の Instance Role を自動使用）
+s3_client = boto3.client('s3', region_name=S3_REGION)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
@@ -300,11 +307,36 @@ def api_ai_chat():
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     file = request.files.get('file')
-    if not file: return jsonify({"error": "No file"}), 400
+    if not file:
+        return jsonify({"error": "No file"}), 400
+    
+    # ファイル名の安全なクレンジングと重複防止
     filename = secure_filename(file.filename)
-    new_filename = f"{os.path.splitext(filename)[0]}_{int(time.time())}{os.path.splitext(filename)[1]}"
-    file.save(os.path.join(app.config['UPLOAD_FOLDER'], new_filename))
-    return jsonify({"url": f"/static/uploads/{new_filename}"})
+    new_filename = f"{int(time.time())}_{filename}"
+    
+    try:
+        # S3へアップロード
+        s3_client.upload_fileobj(
+            file,
+            BUCKET_NAME,
+            new_filename,
+            ExtraArgs={
+                # 前の手順でバケットポリシー（PublicRead）を設定済みなら
+                # この ACL 指定はなくても公開されますが、明示しておくと安心です
+                'ContentType': file.content_type
+            }
+        )
+        
+        # 公開URLの生成
+        s3_url = f"https://{BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{new_filename}"
+        
+        return jsonify({"url": s3_url, "filename": new_filename})
+
+    except Exception as e:
+        # エラーログを出力しておくとデバッグが捗ります
+        print(f"S3 Upload Error: {e}")
+        return jsonify({"error": str(e)}), 500
+    
 
 @app.route('/api/fetch_user', methods=['POST'])
 def fetch_user():
