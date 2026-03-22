@@ -4,7 +4,9 @@ import datetime
 import requests
 import traceback
 import boto3
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import check_password_hash
 from apscheduler.schedulers.background import BackgroundScheduler
 from werkzeug.utils import secure_filename
 from openai import AzureOpenAI
@@ -25,6 +27,32 @@ s3_client = boto3.client('s3', region_name=S3_REGION)
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# セッション管理用のシークレットキー（.envから取得、なければデフォルト値）
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'super-secret-key-12345')
+
+# ------------------------------------------------------------------ #
+# Flask-Login の設定
+# ------------------------------------------------------------------ #
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'  # 未ログイン時のリダイレクト先
+login_manager.login_message = "ログインが必要です。"
+
+class User(UserMixin):
+    def __init__(self, id, email):
+        self.id = id
+        self.email = email
+
+@login_manager.user_loader
+def load_user(user_id):
+    """セッションの復元時に Firestore からユーザー情報を取得"""
+    if not fs_db: return None
+    doc = fs_db.collection('users').document(user_id).get()
+    if doc.exists:
+        data = doc.to_dict()
+        return User(doc.id, data.get('email'))
+    return None
 
 # ------------------------------------------------------------------ #
 # データベースヘルパー（Firestore用）
@@ -213,11 +241,49 @@ def get_azure_client():
         return client, None
     except Exception as e: return None, str(e)
 
+
 # ------------------------------------------------------------------ #
-# API エンドポイント
+# ルーティング・API エンドポイント
 # ------------------------------------------------------------------ #
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        # Firestore からユーザー検索
+        user_query = fs_db.collection('users').where('email', '==', email).limit(1).stream()
+        user_doc = None
+        for doc in user_query:
+            user_doc = doc
+            
+        if user_doc:
+            user_data = user_doc.to_dict()
+            # パスワード検証（ハッシュ化されたものと比較）
+            if check_password_hash(user_data.get('password_hash', ''), password):
+                user_obj = User(user_doc.id, user_data.get('email'))
+                login_user(user_obj)
+                return redirect(url_for('index'))
+        
+        flash('メールアドレスまたはパスワードが正しくありません。')
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+@app.route('/')
+@login_required
+def index():
+    return render_template('index.html')
+
+
 @app.route('/api/settings', methods=['GET', 'POST'])
+@login_required
 def api_settings():
     if request.method == 'POST':
         data = request.json
@@ -238,6 +304,7 @@ def api_settings():
     })
 
 @app.route('/api/posts', methods=['GET', 'POST'])
+@login_required
 def api_posts():
     if request.method == 'POST':
         data = request.json
@@ -261,12 +328,14 @@ def api_posts():
     return jsonify([post_to_dict(doc) for doc in docs])
 
 @app.route('/api/posts/<post_id>/execute', methods=['POST'])
+@login_required
 def force_execute_post(post_id):
     execute_threads_post(post_id)
     doc = get_post_ref(post_id).get()
     return jsonify(post_to_dict(doc))
 
 @app.route('/api/insights/update', methods=['POST'])
+@login_required
 def api_update_insights():
     try:
         update_all_insights()
@@ -275,6 +344,7 @@ def api_update_insights():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/ai/generate', methods=['POST'])
+@login_required
 def api_ai_generate():
     data = request.json
     client, err = get_azure_client()
@@ -290,6 +360,7 @@ def api_ai_generate():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/ai/chat', methods=['POST'])
+@login_required
 def api_ai_chat():
     data = request.json
     client, err = get_azure_client()
@@ -305,6 +376,7 @@ def api_ai_chat():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/upload', methods=['POST'])
+@login_required
 def upload_file():
     file = request.files.get('file')
     if not file:
@@ -315,16 +387,12 @@ def upload_file():
     new_filename = f"{int(time.time())}_{filename}"
     
     try:
-        # S3へアップロード
+        # S3へアップロード (ACLエラー回避のためACL指定は削除済み)
         s3_client.upload_fileobj(
             file,
             BUCKET_NAME,
             new_filename,
-            ExtraArgs={
-                # 前の手順でバケットポリシー（PublicRead）を設定済みなら
-                # この ACL 指定はなくても公開されますが、明示しておくと安心です
-                'ContentType': file.content_type
-            }
+            ExtraArgs={'ContentType': file.content_type}
         )
         
         # 公開URLの生成
@@ -333,23 +401,17 @@ def upload_file():
         return jsonify({"url": s3_url, "filename": new_filename})
 
     except Exception as e:
-        # エラーログを出力しておくとデバッグが捗ります
         print(f"S3 Upload Error: {e}")
         return jsonify({"error": str(e)}), 500
-    
 
 @app.route('/api/fetch_user', methods=['POST'])
+@login_required
 def fetch_user():
     token = request.json.get('token')
     url = f"https://graph.threads.net/v1.0/me?fields=id,username&access_token={token}"
     res = requests.get(url)
     return jsonify(res.json())
 
-@app.route('/')
-def index():
-    return render_template('index.html')
-
 if __name__ == '__main__':
-    # Firestore版では db.create_all() は不要
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
