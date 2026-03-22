@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threads AutoPost - ログイン</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-xl shadow-md w-full max-w-sm">
+        <h2 class="text-2xl font-black text-center mb-6 text-gray-800">Threads <span class="text-blue-600">AutoPost</span></h2>
+        
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm font-bold text-center">
+            {% for message in messages %}
+              {{ message }}
+            {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="/login" class="space-y-4">
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-1">メールアドレス</label>
+                <input type="email" name="email" required class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="admin@example.com">
+            </div>
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-1">パスワード</label>
+                <input type="password" name="password" required class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="••••••••">
+            </div>
+            <button type="submit" class="w-full bg-gray-900 text-white font-bold py-3 rounded-lg hover:bg-gray-800 transition">
+                ログイン
+            </button>
+        </form>
+    </div>
+</body>
+</html>
